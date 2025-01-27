@@ -1,0 +1,32 @@
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Media Bot Configuration</title>
+</head>
+<body>
+    <div class="container">
+        <h1>Configure Your Discord Media Bot</h1>
+        <form id="bot-form">
+            <div class="form-group">
+                <label for="upload-channel">Upload Channel ID:</label>
+                <input type="text" id="upload-channel" placeholder="Enter upload channel ID" required>
+            </div>
+
+            <div class="form-group">
+                <label for="result-channel">Result Channel ID:</label>
+                <input type="text" id="result-channel" placeholder="Enter result channel ID" required>
+            </div>
+
+            <button type="submit">Submit</button>
+        </form>
+
+        <div id="confirmation" class="hidden">
+            <h2>Configuration Saved!</h2>
+            <p>Your bot is now configured. You can start uploading media.</p>
+        </div>
+    </div>
+
+    <script src="hateGitHub.js"></script>
+</body>
+</html>
