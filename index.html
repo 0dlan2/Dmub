@@ -48,7 +48,9 @@
     document.getElementById('uploadForm').addEventListener('submit', async function (e) {
       e.preventDefault();
       const formData = new FormData(this);
-      const response = await fetch('https://your-deployed-server-url/upload-media', {
+      
+      // Adjust the URL depending on your environment (local or production)
+      const response = await fetch('http://localhost:3000/upload-media', {
         method: 'POST',
         body: formData,
       });
