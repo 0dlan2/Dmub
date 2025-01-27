@@ -1,32 +1,66 @@
+<!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Media Bot Configuration</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Upload Media</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+    }
+    form {
+      display: flex;
+      flex-direction: column;
+      max-width: 400px;
+      margin: auto;
+    }
+    input[type="file"] {
+      margin-bottom: 10px;
+    }
+    button {
+      padding: 10px;
+      background-color: #4caf50;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Configure Your Discord Media Bot</h1>
-        <form id="bot-form">
-            <div class="form-group">
-                <label for="upload-channel">Upload Channel ID:</label>
-                <input type="text" id="upload-channel" placeholder="Enter upload channel ID" required>
-            </div>
+  <h1>Upload Media Files</h1>
+  <form id="uploadForm" enctype="multipart/form-data">
+    <label for="uploadChannel">Upload Channel ID:</label>
+    <input type="text" id="uploadChannel" name="uploadChannel" required />
 
-            <div class="form-group">
-                <label for="result-channel">Result Channel ID:</label>
-                <input type="text" id="result-channel" placeholder="Enter result channel ID" required>
-            </div>
+    <label for="resultChannel">Result Channel ID:</label>
+    <input type="text" id="resultChannel" name="resultChannel" required />
 
-            <button type="submit">Submit</button>
-        </form>
+    <label for="mediaFiles">Choose Files:</label>
+    <input type="file" id="mediaFiles" name="mediaFiles" multiple required />
 
-        <div id="confirmation" class="hidden">
-            <h2>Configuration Saved!</h2>
-            <p>Your bot is now configured. You can start uploading media.</p>
-        </div>
-    </div>
+    <button type="submit">Upload</button>
+  </form>
 
-    <script src="hateGitHub.js"></script>
+  <div id="message"></div>
+
+  <script>
+    document.getElementById('uploadForm').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      const formData = new FormData(this);
+      const response = await fetch('http://localhost:3000/upload-media', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const messageDiv = document.getElementById('message');
+      if (response.ok) {
+        messageDiv.innerHTML = 'Files uploaded successfully!';
+      } else {
+        const errorText = await response.text();
+        messageDiv.innerHTML = `Error: ${errorText}`;
+      }
+    });
+  </script>
 </body>
 </html>
