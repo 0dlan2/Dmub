@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Discord Media Manager</title>
+    <link rel="stylesheet" href="discord/media.css">
+    <link rel="icon" type="image/svg+xml" href="discord/icon.svg">
+</head>
+<body>
+    <main class="container">
+        <header class="header">
+            <h1 class="title">
+                Discord Media Uploader Bot
+            </h1>
+        </header>
+
+        <form id="upload-form" class="upload-form">
+            <!-- File Dropzone -->
+            <div class="dropzone" id="dropzone" role="region" aria-label="File upload zone">
+                <div class="dropzone-content">
+                    <div class="upload-icon">⬆️</div>
+                    <p class="dropzone-text">
+                        <span class="drag-text">Drag & drop files here</span>
+                        <span class="or-text">or</span>
+                        <span class="browse-text">browse files</span>
+                    </p>
+                </div>
+                <input type="file" id="fileInput" class="visually-hidden" multiple accept="image/*, video/*">
+            </div>
+
+            <!-- File Previews -->
+            <div class="preview-container" id="preview-container" aria-live="polite"></div>
+
+            <!-- Channel Inputs -->
+            <div class="input-group">
+                <label for="uploadChannel" class="input-label">
+                    <span class="input-icon">📤</span>
+                    Upload Channel ID
+                </label>
+                <input type="text" id="uploadChannel" class="input-field" 
+                       placeholder="e.g., 123456789012345678" required
+                       pattern="\d{18,19}" title="18-19 digit Discord Channel ID">
+            </div>
+
+            <div class="input-group">
+                <label for="resultChannel" class="input-label">
+                    <span class="input-icon">📥</span>
+                    Result Channel ID
+                </label>
+                <input type="text" id="resultChannel" class="input-field" 
+                       placeholder="e.g., 987654321098765432" required
+                       pattern="\d{18,19}" title="18-19 digit Discord Channel ID">
+            </div>
+
+            <!-- Progress & Controls -->
+            <div class="progress-container">
+                <div class="progress-bar" id="progress-bar" role="progressbar" 
+                     aria-valuemin="0" aria-valuemax="100">
+                    <div class="progress-fill" id="progress"></div>
+                </div>
+                <div class="progress-text" id="progress-text">0%</div>
+            </div>
+
+            <button type="submit" class="submit-button" aria-live="polite">
+                <span class="button-text">Upload Files</span>
+                <span class="button-icon">🚀</span>
+            </button>
+            <div id="feedback" class="feedback-message" aria-live="assertive"></div>
+        </form>
+    </main>
+
+    <script src="discord/uploader.js" defer></script>
+</body>
+</html>
