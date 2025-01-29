@@ -1,16 +1,18 @@
-require('dotenv').config();
-const { 
-    Client, 
-    GatewayIntentBits, 
-    SlashCommandBuilder, 
-    Routes 
-} = require('discord.js');
-const { REST } = require('@discordjs/rest');
-const express = require('express');
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
-const cors = require('cors');
+import 'dotenv/config';
+import { Client, GatewayIntentBits, SlashCommandBuilder, Routes } from 'discord.js';
+import { REST } from '@discordjs/rest';
+import express from 'express';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+import cors from 'cors';
+import { fileURLToPath } from 'url';
+
+// ======================
+// ES MODULE FIXES
+// ======================
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // ======================
 // INITIALIZATION
@@ -63,21 +65,19 @@ const commands = [
         .setDescription('Wake up the bot from standby')
 ].map(command => command.toJSON());
 
-// Register commands
+// ======================
+// BOT SETUP
+// ======================
 const rest = new REST({ version: '10' }).setToken(TOKEN);
-(async () => {
-    try {
-        console.log('🔁 Registering application commands...');
-        await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-        console.log('✅ Commands registered successfully!');
-    } catch (error) {
-        console.error('❌ Failed to register commands:', error);
-    }
-})();
 
-// ======================
-// BOT STATUS MANAGEMENT
-// ======================
+try {
+    console.log('🔁 Registering application commands...');
+    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+    console.log('✅ Commands registered successfully!');
+} catch (error) {
+    console.error('❌ Failed to register commands:', error);
+}
+
 let isReady = false;
 
 client.once('ready', () => {
