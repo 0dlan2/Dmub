@@ -113,7 +113,7 @@ async function uploadFiles(uploadChannel, resultChannel) {
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', 'https://RAILWAY_APP.up.railway.app/upload-media');
+    xhr.open('POST', 'https://dmub-production.up.railway.app/upload-media');
 
     // Progress handler
     xhr.upload.addEventListener('progress', (e) => {
