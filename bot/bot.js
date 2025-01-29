@@ -23,6 +23,8 @@ const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.Token_hh;
 const CLIENT_ID = process.env.CLIENT_ID;
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
+const MAX_MESSAGE_LENGTH = 2000; // Discord character limit
+const MAX_FILENAME_LENGTH = 80;
 
 const client = new Client({
     intents: [
@@ -144,6 +146,13 @@ app.post('/upload-media', upload.array('mediaFiles'), async (req, res) => {
             return res.status(400).json({ error: 'Invalid channel IDs' });
         }
 
+        // Validate filenames before processing
+        req.files.forEach(file => {
+            if (file.originalname.length > MAX_FILENAME_LENGTH) {
+                throw new Error(`Filename too long: ${file.originalname} (max ${MAX_FILENAME_LENGTH} chars)`);
+            }
+        });
+
         const uploadedFiles = await Promise.all(
             req.files.map(async file => {
                 const filePath = path.join(__dirname, 'uploads', file.filename);
@@ -157,17 +166,51 @@ app.post('/upload-media', upload.array('mediaFiles'), async (req, res) => {
             })
         );
 
-        const formattedResults = uploadedFiles
-            .sort((a, b) => a.name.localeCompare(b.name))
-            .map(file => `${file.name}: ${file.url}`)
-            .join('\n');
+        // Sort files and split into message chunks
+        const sortedFiles = uploadedFiles.sort((a, b) => a.name.localeCompare(b.name));
+        const messageChunks = [];
+        let currentChunk = [];
+        let currentLength = 0;
 
-        await resultChannelObj.send(`📬 Upload Complete:\n${formattedResults}`);
-        res.json({ success: true });
+        for (const file of sortedFiles) {
+            const entry = `${file.name}: ${file.url}\n`;
+            if (entry.length > MAX_MESSAGE_LENGTH) {
+                throw new Error(`File entry too long: ${file.name}`);
+            }
+
+            if (currentLength + entry.length > MAX_MESSAGE_LENGTH) {
+                messageChunks.push(currentChunk.join('\n'));
+                currentChunk = [];
+                currentLength = 0;
+            }
+
+            currentChunk.push(entry.trim());
+            currentLength += entry.length;
+        }
+
+        if (currentChunk.length > 0) {
+            messageChunks.push(currentChunk.join('\n'));
+        }
+
+        // Send chunked messages
+        for (let i = 0; i < messageChunks.length; i++) {
+            await resultChannelObj.send(
+                `📬 Upload Part ${i + 1}/${messageChunks.length}:\n${messageChunks[i]}`
+            );
+        }
+
+        res.json({ 
+            success: true,
+            totalFiles: uploadedFiles.length,
+            chunksSent: messageChunks.length
+        });
 
     } catch (error) {
         console.error('❌ Upload Error:', error);
-        res.status(500).json({ error: error.message || 'Upload failed' });
+        res.status(500).json({ 
+            error: error.message || 'Upload failed',
+            details: error.response?.data || null
+        });
     }
 });
 
