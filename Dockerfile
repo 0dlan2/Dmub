@@ -5,4 +5,4 @@ COPY package*.json ./
 RUN npm install --production
 COPY . .
 
-CMD ["node", "bot.js"]
+CMD ["node", "bot/bot.js"]
