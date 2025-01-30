@@ -1,6 +1,5 @@
 FROM node:18-alpine
 
-# Create non-root user
 RUN addgroup -S appgroup && \
     adduser -S appuser -G appgroup
 
