@@ -1,11 +1,12 @@
+// bot/bot.js
 import 'dotenv/config';
-import { Client, GatewayIntentBits, SlashCommandBuilder } from 'discord.js';
-import { REST, Routes } from '@discordjs/rest';
+import { Client, GatewayIntentBits, SlashCommandBuilder, Routes } from 'discord.js';
+import { REST } from '@discordjs/rest';
 import express from 'express';
 import multer from 'multer';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
+import { fileURLToPath } from 'url';
 import os from 'os';
 import cors from 'cors';
 import axios from 'axios';
@@ -21,13 +22,16 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.Token_hh;
 const CLIENT_ID = process.env.CLIENT_ID;
+const YT_API_KEY = process.env.YOUTUBE_API_KEY;
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
 
+// Validate essential environment variables
 if (!TOKEN || !CLIENT_ID) {
     console.error('❌ Missing required environment variables');
     process.exit(1);
 }
 
+// Discord client configuration
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -37,7 +41,7 @@ const client = new Client({
 });
 
 // ======================
-// TEMPORARY FILE HANDLING
+// TEMPORARY FILE MANAGEMENT
 // ======================
 const activeUploads = new Map();
 
@@ -47,20 +51,21 @@ const createTempDir = async () => {
     return tempDir;
 };
 
-const cleanup = async () => {
+const cleanupSystem = async () => {
+    console.log('\n🧹 Starting system cleanup...');
     for (const [dir] of activeUploads) {
         try {
             await fs.rm(dir, { recursive: true, force: true });
-            console.log(`🧹 Cleaned temporary directory: ${dir}`);
+            console.log(`✔️ Cleared temporary directory: ${dir}`);
         } catch (error) {
-            console.error(`❌ Failed to clean ${dir}:`, error);
+            console.error(`❌ Failed to clean ${dir}:`, error.message);
         }
     }
     activeUploads.clear();
 };
 
 // ======================
-// EXPRESS CONFIGURATION
+// EXPRESS SERVER CONFIG
 // ======================
 app.use(cors({
     origin: [
@@ -69,8 +74,99 @@ app.use(cors({
     ],
     methods: ['POST']
 }));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// ======================
+// DISCORD SLASH COMMANDS
+// ======================
+const commands = [
+    new SlashCommandBuilder()
+        .setName('bda')
+        .setDescription('Get bot configuration link'),
+    new SlashCommandBuilder()
+        .setName('channel_id')
+        .setDescription('Get channel ID')
+        .addChannelOption(option =>
+            option.setName('channel')
+                .setDescription('Target channel')
+                .setRequired(true)
+        ),
+    new SlashCommandBuilder()
+        .setName('arise')
+        .setDescription('Wake up the bot from standby'),
+    new SlashCommandBuilder()
+        .setName('from_youtube')
+        .setDescription('Import YouTube playlist videos')
+        .addStringOption(option =>
+            option.setName('url')
+                .setDescription('YouTube playlist URL')
+                .setRequired(true)
+        )
+].map(command => command.toJSON());
+
+// ======================
+// COMMAND REGISTRATION
+// ======================
+const registerCommands = async () => {
+    try {
+        console.log('🔁 Registering application commands...');
+        await new REST({ version: '10' }).setToken(TOKEN)
+            .put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+        console.log('✅ Successfully registered commands!');
+    } catch (error) {
+        console.error('❌ Command registration failed:', error);
+        process.exit(1);
+    }
+};
+
+// ======================
+// BOT EVENT HANDLERS
+// ======================
+client.once('ready', () => {
+    console.log(`🤖 Logged in as ${client.user.tag}`);
+    registerCommands();
+});
+
+client.on('interactionCreate', async interaction => {
+    if (!interaction.isCommand()) return;
+
+    try {
+        const { commandName, options } = interaction;
+
+        switch(commandName) {
+            case 'arise':
+                await interaction.reply(
+                    client.isReady ? 
+                    '⚡ Ready! Use `/bda` to start' : 
+                    '💤 Warming up...'
+                );
+                break;
+
+            case 'bda':
+                await interaction.reply(
+                    `🔗 Configuration Dashboard: ${process.env.WEBPAGE_URL}`
+                );
+                break;
+
+            case 'channel_id':
+                const channel = options.getChannel('channel');
+                await interaction.reply(`📡 Channel ID: \`${channel.id}\``);
+                break;
+
+            case 'from_youtube':
+                await handleYouTubeRequest(interaction, options);
+                break;
+        }
+    } catch (error) {
+        console.error('❌ Command error:', error);
+        await interaction.reply({ 
+            content: '⚠️ Error executing command', 
+            ephemeral: true 
+        });
+    }
+});
 
 // ======================
 // FILE UPLOAD ENDPOINT
@@ -80,6 +176,7 @@ app.post('/upload-media', async (req, res) => {
     try {
         tempDir = await createTempDir();
         
+        // Configure multer for temporary storage
         const storage = multer.diskStorage({
             destination: tempDir,
             filename: (_, file, cb) => {
@@ -92,7 +189,7 @@ app.post('/upload-media', async (req, res) => {
             limits: { fileSize: MAX_FILE_SIZE }
         }).array('mediaFiles');
 
-        // Process upload
+        // Process file upload
         await new Promise((resolve, reject) => {
             upload(req, res, (err) => {
                 if (err) reject(err);
@@ -113,7 +210,7 @@ app.post('/upload-media', async (req, res) => {
             throw new Error('Invalid channel IDs');
         }
 
-        // Process files
+        // Process uploaded files
         const files = await fs.readdir(tempDir);
         const uploadedFiles = await Promise.all(
             files.map(async (filename) => {
@@ -126,13 +223,12 @@ app.post('/upload-media', async (req, res) => {
             })
         );
 
-        // Prepare content
+        // Prepare and send results
         const textContent = uploadedFiles
-            .sort((a, b) => a.name.localeCompare(b.name))
+            .sort((a, b) => naturalCompare(a.name, b.name))
             .map(file => `${file.name}: ${file.url}`)
             .join('\n');
 
-        // Send results
         if (textContent.length > 1900) {
             await resultChannelObj.send({
                 content: '📁 Uploaded files:',
@@ -155,111 +251,42 @@ app.post('/upload-media', async (req, res) => {
                 await fs.rm(tempDir, { recursive: true, force: true });
                 activeUploads.delete(tempDir);
             } catch (error) {
-                console.error('❌ Temp cleanup failed:', error);
+                console.error('❌ Temporary directory cleanup failed:', error);
             }
         }
     }
 });
 
 // ======================
-// DISCORD COMMANDS
+// YOUTUBE INTEGRATION
 // ======================
-const commands = [
-    new SlashCommandBuilder()
-        .setName('bda')
-        .setDescription('Get configuration link'),
-    new SlashCommandBuilder()
-        .setName('channel_id')
-        .setDescription('Get channel ID')
-        .addChannelOption(option =>
-            option.setName('channel')
-                .setDescription('Target channel')
-                .setRequired(true)
-        ),
-    new SlashCommandBuilder()
-        .setName('arise')
-        .setDescription('Wake up the bot'),
-    new SlashCommandBuilder()
-        .setName('from_youtube')
-        .setDescription('Import YouTube playlist videos')
-        .addStringOption(option =>
-            option.setName('url')
-                .setDescription('YouTube playlist URL')
-                .setRequired(true)
-        )
-].map(command => command.toJSON());
-
-// ======================
-// BOT SETUP
-// ======================
-client.once('ready', async () => {
-    console.log(`🤖 Logged in as ${client.user.tag}`);
+async function handleYouTubeRequest(interaction, options) {
+    await interaction.deferReply();
+    
     try {
-        await new REST({ version: '10' }).setToken(TOKEN)
-            .put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-        console.log('✅ Commands registered!');
-    } catch (error) {
-        console.error('❌ Command registration failed:', error);
-    }
-});
-
-client.on('interactionCreate', async interaction => {
-    if (!interaction.isCommand()) return;
-
-    try {
-        const { commandName, options } = interaction;
-
-        switch (commandName) {
-            case 'arise':
-                await interaction.reply('⚡ Bot is alive!');
-                break;
-
-            case 'bda':
-                await interaction.reply(`🔗 Configuration: ${process.env.WEBPAGE_URL}`);
-                break;
-
-            case 'channel_id':
-                const channel = options.getChannel('channel');
-                await interaction.reply(`📡 Channel ID: \`${channel.id}\``);
-                break;
-
-            case 'from_youtube':
-                const playlistUrl = options.getString('url');
-                await interaction.deferReply();
-
-                try {
-                    const playlistId = extractPlaylistId(playlistUrl);
-                    const videos = await fetchPlaylistVideos(playlistId);
-
-                    if (videos.length === 0) {
-                        await interaction.editReply('❌ No videos found in this playlist');
-                        return;
-                    }
-
-                    const formatted = formatVideos(videos);
-                    await sendResults(interaction, formatted);
-
-                } catch (error) {
-                    await interaction.editReply(`❌ Error: ${error.message}`);
-                }
-                break;
+        if (!YT_API_KEY) throw new Error('YouTube API not configured');
+        
+        const playlistUrl = options.getString('url');
+        const playlistId = extractPlaylistId(playlistUrl);
+        const videos = await fetchPlaylistVideos(playlistId);
+        
+        if (videos.length === 0) {
+            await interaction.editReply('❌ No videos found in this playlist');
+            return;
         }
-    } catch (error) {
-        console.error('❌ Command error:', error);
-        await interaction.reply({ content: '⚠️ Error executing command', ephemeral: true });
-    }
-});
 
-// ======================
-// YOUTUBE UTILITY METHODS
-// ======================
-function extractPlaylistId(url) {
-    if (!url.includes('youtube.com') && !url.includes('youtu.be')) {
-        throw new Error('Not a YouTube URL');
+        const formatted = formatVideos(videos);
+        await sendYouTubeResults(interaction, formatted);
+        
+    } catch (error) {
+        await interaction.editReply(`❌ Error: ${error.message}`);
     }
+}
+
+function extractPlaylistId(url) {
     const regex = /[&?]list=([a-zA-Z0-9_-]+)/;
     const match = url.match(regex);
-    if (!match) throw new Error('Invalid playlist URL');
+    if (!match) throw new Error('Invalid YouTube playlist URL');
     return match[1];
 }
 
@@ -268,28 +295,22 @@ async function fetchPlaylistVideos(playlistId) {
     let nextPageToken = null;
 
     do {
-        const params = {
-            part: 'snippet',
-            playlistId,
-            maxResults: 50,
-            key: process.env.YOUTUBE_API_KEY
-        };
-
-        try {
-            const response = await axios.get('https://www.googleapis.com/youtube/v3/playlistItems', { params });
-
-            if (response.data.error) {
-                throw new Error(`YouTube API: ${response.data.error.message}`);
+        const response = await axios.get('https://www.googleapis.com/youtube/v3/playlistItems', {
+            params: {
+                part: 'snippet',
+                playlistId,
+                maxResults: 50,
+                key: YT_API_KEY,
+                pageToken: nextPageToken
             }
+        });
 
-            nextPageToken = response.data.nextPageToken;
-            videos.push(...response.data.items.map(item => ({
-                title: item.snippet.title,
-                id: item.snippet.resourceId.videoId
-            })));
-        } catch (error) {
-            throw new Error(`Error fetching playlist: ${error.message}`);
-        }
+        nextPageToken = response.data.nextPageToken;
+        videos.push(...response.data.items.map(item => ({
+            title: item.snippet.title,
+            id: item.snippet.resourceId.videoId
+        })));
+
     } while (nextPageToken);
 
     return videos;
@@ -304,7 +325,7 @@ function formatVideos(videos) {
         }));
 }
 
-async function sendResults(interaction, formatted) {
+async function sendYouTubeResults(interaction, formatted) {
     let output = '';
     const MAX_LENGTH = 1900;
 
@@ -321,31 +342,32 @@ async function sendResults(interaction, formatted) {
         await interaction.channel.send(output);
     }
 
-    await interaction.editReply(`✅ Found ${formatted.length} videos!`);
+    await interaction.editReply(`✅ Successfully imported ${formatted.length} videos!`);
 }
 
 // ======================
-// SHUTDOWN HANDLING
+// SERVER MANAGEMENT
 // ======================
-const handleShutdown = async () => {
-    console.log('\n🔴 Shutting down...');
-    await cleanup();
+process.on('SIGINT', async () => {
+    console.log('\n🔴 Received SIGINT - Shutting down gracefully');
+    await cleanupSystem();
     client.destroy();
     process.exit();
-};
+});
 
-process.on('SIGINT', handleShutdown);
-process.on('SIGTERM', handleShutdown);
+process.on('SIGTERM', async () => {
+    console.log('\n🔴 Received SIGTERM - Terminating process');
+    await cleanupSystem();
+    client.destroy();
+    process.exit();
+});
 
-// ======================
-// SERVER START
-// ======================
 app.listen(PORT, () => {
     console.log(`🌐 Server running on port ${PORT}`);
     client.login(TOKEN)
         .then(() => console.log('🔗 Connecting to Discord...'))
         .catch(error => {
-            console.error('❌ Login failed:', error);
+            console.error('❌ Discord login failed:', error);
             process.exit(1);
         });
 });

@@ -2,20 +2,13 @@
   "name": "discord-bot",
   "version": "1.0.0",
   "type": "module",
-  "main": "bot.js",
-  "scripts": {
-    "start": "node bot.js"
-  },
-  "engines": {
-    "node": ">=18"
-  },
   "dependencies": {
-    "@discordjs/rest": "^0.6.0",
-    "cors": "^2.8.5",
     "discord.js": "^14.13.0",
-    "dotenv": "^16.3.1",
+    "@discordjs/rest": "^0.6.0",
     "express": "^4.18.2",
     "multer": "^1.4.5-lts.1",
+    "dotenv": "^16.3.1",
+    "cors": "^2.8.5",
     "axios": "^1.6.2",
     "natural-compare": "^1.4.0"
   }
