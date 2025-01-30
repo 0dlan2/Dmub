@@ -8,6 +8,8 @@ import path from 'path';
 import fs from 'fs';
 import cors from 'cors';
 import { fileURLToPath } from 'url';
+import axios from 'axios';
+import naturalCompare from 'natural-compare';
 
 // ======================
 // INITIALIZATION
@@ -21,6 +23,10 @@ const TOKEN = process.env.Token_hh;
 const CLIENT_ID = process.env.CLIENT_ID;
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
 
+// YouTube API config
+const YT_API_KEY = process.env.YOUTUBE_API_KEY;
+const YT_API_URL = 'https://www.googleapis.com/youtube/v3/playlistItems';
+
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -28,6 +34,25 @@ const client = new Client({
         GatewayIntentBits.MessageContent
     ]
 });
+
+// ======================
+// FILE SYSTEM INITIALIZATION
+// ======================
+const UPLOAD_DIR = path.join(__dirname, 'uploads');
+
+try {
+    if (fs.existsSync(UPLOAD_DIR)) {
+        fs.rmSync(UPLOAD_DIR, { recursive: true, force: true });
+        console.log('🗑️  Deleted old uploads directory');
+    }
+
+    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+    fs.chmodSync(UPLOAD_DIR, 0o777);
+    console.log('📂 Created fresh uploads directory with 777 permissions');
+} catch (error) {
+    console.error('❌ Failed to initialize upload directory:', error);
+    process.exit(1);
+}
 
 app.use(cors({
     origin: [
@@ -40,7 +65,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 const upload = multer({
-    dest: path.join(__dirname, 'uploads'),
+    dest: UPLOAD_DIR,
     limits: { fileSize: MAX_FILE_SIZE }
 });
 
@@ -55,7 +80,15 @@ const commands = [
         .addChannelOption(option =>
             option.setName('channel').setDescription('Target channel').setRequired(true)
         ),
-    new SlashCommandBuilder().setName('arise').setDescription('Wake up the bot')
+    new SlashCommandBuilder().setName('arise').setDescription('Wake up the bot'),
+    new SlashCommandBuilder()
+        .setName('from_youtube')
+        .setDescription('Import YouTube playlist videos')
+        .addStringOption(option =>
+            option.setName('url')
+                .setDescription('YouTube playlist URL')
+                .setRequired(true)
+        )
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -63,10 +96,22 @@ const rest = new REST({ version: '10' }).setToken(TOKEN);
 (async () => {
     try {
         console.log('🔁 Registering commands...');
+        
         await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-        console.log('✅ Commands registered!');
+        
+        const GUILD_ID = process.env.TEST_GUILD_ID;
+        if (GUILD_ID) {
+            await rest.put(
+                Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
+                { body: commands }
+            );
+            console.log('✅ Guild-specific commands registered!');
+        }
+
+        console.log('✅ Global commands registered!');
     } catch (error) {
         console.error('❌ Command registration failed:', error);
+        process.exit(1);
     }
 })();
 
@@ -109,6 +154,27 @@ client.on('interactionCreate', async interaction => {
                 const channel = options.getChannel('channel');
                 await interaction.reply(`📡 ID: \`${channel.id}\``);
                 break;
+
+            case 'from_youtube':
+                const playlistUrl = options.getString('url');
+                await interaction.deferReply();
+                
+                try {
+                    const playlistId = extractPlaylistId(playlistUrl);
+                    const videos = await fetchPlaylistVideos(playlistId);
+                    
+                    if (videos.length === 0) {
+                        await interaction.editReply('❌ No videos found in this playlist');
+                        return;
+                    }
+
+                    const formatted = formatVideos(videos);
+                    await sendResults(interaction, formatted);
+                    
+                } catch (error) {
+                    await interaction.editReply(`❌ Error: ${error.message}`);
+                }
+                break;
         }
     } catch (error) {
         console.error('❌ Command error:', error);
@@ -134,7 +200,6 @@ app.post('/upload-media', upload.array('mediaFiles'), async (req, res) => {
             return res.status(400).json({ error: 'Invalid channel IDs' });
         }
 
-        // Process files
         const uploadedFiles = await Promise.all(
             req.files.map(async file => {
                 const filePath = path.join(__dirname, 'uploads', file.filename);
@@ -148,13 +213,11 @@ app.post('/upload-media', upload.array('mediaFiles'), async (req, res) => {
             })
         );
 
-        // Create text content
         const textContent = uploadedFiles
-            .sort((a, b) => a.name.localeCompare(b.name))
+            .sort((a, b) => naturalCompare(a.name, b.name))
             .map(file => `${file.name}: ${file.url}`)
             .join('\n');
 
-        // Send as text file if over 1900 characters
         if (textContent.length > 1900) {
             const fileName = `uploads_${Date.now()}.txt`;
             const fileBuffer = Buffer.from(textContent, 'utf-8');
@@ -196,3 +259,87 @@ process.on('SIGINT', () => {
     client.destroy();
     process.exit();
 });
+
+// ======================
+// YOUTUBE UTILITY METHODS
+// ======================
+function extractPlaylistId(url) {
+    if (!url.includes('youtube.com') && !url.includes('youtu.be')) {
+        throw new Error('Not a YouTube URL');
+    }
+    const regex = /[&?]list=([a-zA-Z0-9_-]+)/;
+    const match = url.match(regex);
+    if (!match) throw new Error('Invalid playlist URL');
+    return match[1];
+}
+
+async function fetchPlaylistVideos(playlistId) {
+    let videos = [];
+    let nextPageToken = null;
+
+    do {
+        const params = {
+            part: 'snippet',
+            playlistId,
+            maxResults: 50,
+            key: YT_API_KEY
+        };
+
+        try {
+            const response = await axios.get(YT_API_URL, { params })
+                .catch(async error => {
+                    if (error.response?.status === 429) {
+                        await new Promise(resolve => setTimeout(resolve, 5000));
+                        return axios.get(YT_API_URL, { params });
+                    }
+                    throw error;
+                });
+
+            if (response.data.error) {
+                throw new Error(`YouTube API: ${response.data.error.message}`);
+            }
+
+            nextPageToken = response.data.nextPageToken;
+
+            videos.push(...response.data.items.map(item => ({
+                title: item.snippet.title,
+                id: item.snippet.resourceId.videoId
+            })));
+
+        } catch (error) {
+            throw new Error(`Error fetching playlist: ${error.message}`);
+        }
+
+    } while (nextPageToken);
+
+    return videos;
+}
+
+function formatVideos(videos) {
+    return videos
+        .sort((a, b) => naturalCompare(a.title, b.title))
+        .map(video => ({
+            content: `${video.title}: https://youtu.be/${video.id}`,
+            length: video.title.length + video.id.length + 6
+        }));
+}
+
+async function sendResults(interaction, formatted) {
+    let output = '';
+    const MAX_LENGTH = 1900;
+
+    for (const video of formatted) {
+        if (output.length + video.length > MAX_LENGTH) {
+            await interaction.channel.send(output);
+            output = '';
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        output += `${video.content}\n`;
+    }
+
+    if (output.length > 0) {
+        await interaction.channel.send(output);
+    }
+
+    await interaction.editReply(`✅ Found ${formatted.length} videos!`);
+}
