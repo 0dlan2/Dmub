@@ -1,10 +1,15 @@
 FROM node:18-alpine
+
+RUN addgroup -S appgroup && \
+    adduser -S appuser -G appgroup && \
+    mkdir -p /tmp/uploads && \
+    chown -R appuser:appgroup /tmp/uploads
+
 WORKDIR /app/bot
-COPY bot/package*.json ./
-COPY bot/bot.js ./
+USER appuser
+
+COPY package*.json ./
 RUN npm install --production
-RUN mkdir -p uploads && chown -R node:node uploads
-RUN npm install axios natural-compare
-COPY bot/ ./
-USER node
+COPY . .
+
 CMD ["node", "bot.js"]

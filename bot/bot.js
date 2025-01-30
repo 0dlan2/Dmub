@@ -10,6 +10,7 @@ import cors from 'cors';
 import { fileURLToPath } from 'url';
 import axios from 'axios';
 import naturalCompare from 'natural-compare';
+import os from 'os';
 
 // ======================
 // INITIALIZATION
@@ -38,7 +39,7 @@ const client = new Client({
 // ======================
 // FILE SYSTEM INITIALIZATION
 // ======================
-const UPLOAD_DIR = path.join(__dirname, 'uploads');
+const UPLOAD_DIR = path.join(os.tmpdir(), 'discord-uploads');
 
 try {
     if (fs.existsSync(UPLOAD_DIR)) {
@@ -47,8 +48,7 @@ try {
     }
 
     fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-    fs.chmodSync(UPLOAD_DIR, 0o777);
-    console.log('📂 Created fresh uploads directory with 777 permissions');
+    console.log('📂 Created fresh uploads directory at:', UPLOAD_DIR);
 } catch (error) {
     console.error('❌ Failed to initialize upload directory:', error);
     process.exit(1);
