@@ -47,8 +47,7 @@ try {
     }
 
     fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-    fs.chmodSync(UPLOAD_DIR, 0o777);
-    console.log('📂 Created fresh uploads directory with 777 permissions');
+    console.log('📂 Created fresh uploads directory');
 } catch (error) {
     console.error('❌ Failed to initialize upload directory:', error);
     process.exit(1);
