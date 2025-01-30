@@ -5,12 +5,12 @@ import { REST } from '@discordjs/rest';
 import express from 'express';
 import multer from 'multer';
 import path from 'path';
-import fs from 'fs';
-import cors from 'cors';
+import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
+import os from 'os';
+import cors from 'cors';
 import axios from 'axios';
 import naturalCompare from 'natural-compare';
-import os from 'os';
 
 // ======================
 // INITIALIZATION
@@ -37,23 +37,26 @@ const client = new Client({
 });
 
 // ======================
-// FILE SYSTEM INITIALIZATION
+// DYNAMIC TEMP DIR HANDLING
 // ======================
-const UPLOAD_DIR = path.join(os.tmpdir(), 'discord-uploads');
+const createTempDir = () => path.join(os.tmpdir(), `upload-${Date.now()}`);
+let activeTempDirs = new Set();
 
-try {
-    if (fs.existsSync(UPLOAD_DIR)) {
-        fs.rmSync(UPLOAD_DIR, { recursive: true, force: true });
-        console.log('🗑️  Deleted old uploads directory');
+const cleanupTempDirs = async () => {
+    for (const dir of activeTempDirs) {
+        try {
+            await fs.rm(dir, { recursive: true, force: true });
+            console.log(`🧹 Cleaned up temp directory: ${dir}`);
+        } catch (error) {
+            console.error(`❌ Failed to clean ${dir}:`, error);
+        }
     }
+    activeTempDirs.clear();
+};
 
-    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-    console.log('📂 Created fresh uploads directory at:', UPLOAD_DIR);
-} catch (error) {
-    console.error('❌ Failed to initialize upload directory:', error);
-    process.exit(1);
-}
-
+// ======================
+// EXPRESS CONFIGURATION
+// ======================
 app.use(cors({
     origin: [
         'https://0dlan2.github.io',
@@ -63,11 +66,6 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-const upload = multer({
-    dest: UPLOAD_DIR,
-    limits: { fileSize: MAX_FILE_SIZE }
-});
 
 // ======================
 // DISCORD COMMANDS
@@ -93,22 +91,14 @@ const commands = [
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
 
+// ======================
+// SERVER SETUP
+// ======================
 (async () => {
     try {
         console.log('🔁 Registering commands...');
-        
         await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-        
-        const GUILD_ID = process.env.TEST_GUILD_ID;
-        if (GUILD_ID) {
-            await rest.put(
-                Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
-                { body: commands }
-            );
-            console.log('✅ Guild-specific commands registered!');
-        }
-
-        console.log('✅ Global commands registered!');
+        console.log('✅ Commands registered!');
     } catch (error) {
         console.error('❌ Command registration failed:', error);
         process.exit(1);
@@ -158,11 +148,11 @@ client.on('interactionCreate', async interaction => {
             case 'from_youtube':
                 const playlistUrl = options.getString('url');
                 await interaction.deferReply();
-                
+
                 try {
                     const playlistId = extractPlaylistId(playlistUrl);
                     const videos = await fetchPlaylistVideos(playlistId);
-                    
+
                     if (videos.length === 0) {
                         await interaction.editReply('❌ No videos found in this playlist');
                         return;
@@ -170,7 +160,7 @@ client.on('interactionCreate', async interaction => {
 
                     const formatted = formatVideos(videos);
                     await sendResults(interaction, formatted);
-                    
+
                 } catch (error) {
                     await interaction.editReply(`❌ Error: ${error.message}`);
                 }
@@ -185,47 +175,66 @@ client.on('interactionCreate', async interaction => {
 // ======================
 // FILE UPLOAD ENDPOINT
 // ======================
-app.post('/upload-media', upload.array('mediaFiles'), async (req, res) => {
+app.post('/upload-media', async (req, res) => {
+    const tempDir = createTempDir();
+    activeTempDirs.add(tempDir);
+
+    const storage = multer.diskStorage({
+        destination: tempDir,
+        filename: (_, file, cb) => {
+            cb(null, file.originalname);
+        }
+    });
+
+    const upload = multer({
+        storage,
+        limits: { fileSize: MAX_FILE_SIZE }
+    }).array('mediaFiles');
+
     try {
+        await new Promise((resolve, reject) => {
+            upload(req, res, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
         const { uploadChannel, resultChannel } = req.body;
-        
+
         if (!uploadChannel || !resultChannel) {
-            return res.status(400).json({ error: 'Missing channel IDs' });
+            throw new Error('Missing channel IDs');
         }
 
         const uploadChannelObj = await client.channels.fetch(uploadChannel);
         const resultChannelObj = await client.channels.fetch(resultChannel);
 
         if (!uploadChannelObj?.isTextBased() || !resultChannelObj?.isTextBased()) {
-            return res.status(400).json({ error: 'Invalid channel IDs' });
+            throw new Error('Invalid channel IDs');
         }
 
+        const files = await fs.readdir(tempDir);
         const uploadedFiles = await Promise.all(
-            req.files.map(async file => {
-                const filePath = path.join(__dirname, 'uploads', file.filename);
+            files.map(async (filename) => {
+                const filePath = path.join(tempDir, filename);
                 const message = await uploadChannelObj.send({ files: [filePath] });
-                fs.unlinkSync(filePath);
-                
                 return {
-                    name: file.originalname,
+                    name: filename,
                     url: message.attachments.first().url
                 };
             })
         );
 
         const textContent = uploadedFiles
-            .sort((a, b) => naturalCompare(a.name, b.name))
+            .sort((a, b) => a.name.localeCompare(b.name))
             .map(file => `${file.name}: ${file.url}`)
             .join('\n');
 
         if (textContent.length > 1900) {
-            const fileName = `uploads_${Date.now()}.txt`;
-            const fileBuffer = Buffer.from(textContent, 'utf-8');
-            
+            const fileName = `uploads-${Date.now()}.txt`;
             await resultChannelObj.send({
                 content: '📁 Uploaded files:',
                 files: [{
-                    attachment: fileBuffer,
+                    attachment: Buffer.from(textContent),
                     name: fileName
                 }]
             });
@@ -234,16 +243,32 @@ app.post('/upload-media', upload.array('mediaFiles'), async (req, res) => {
         }
 
         res.json({ success: true });
-
     } catch (error) {
         console.error('❌ Upload error:', error);
         res.status(500).json({ error: error.message || 'Upload failed' });
+    } finally {
+        await fs.rm(tempDir, { recursive: true, force: true });
+        activeTempDirs.delete(tempDir);
     }
 });
 
 // ======================
 // SERVER MANAGEMENT
 // ======================
+process.on('SIGINT', async () => {
+    console.log('\n🔴 Shutting down...');
+    await cleanupTempDirs();
+    client.destroy();
+    process.exit();
+});
+
+process.on('SIGTERM', async () => {
+    console.log('\n🔴 Termination signal received');
+    await cleanupTempDirs();
+    client.destroy();
+    process.exit();
+});
+
 app.listen(PORT, () => {
     console.log(`🌐 Server running on port ${PORT}`);
     client.login(TOKEN)
@@ -252,12 +277,6 @@ app.listen(PORT, () => {
             console.error('❌ Login failed:', error);
             process.exit(1);
         });
-});
-
-process.on('SIGINT', () => {
-    console.log('\n🔴 Shutting down...');
-    client.destroy();
-    process.exit();
 });
 
 // ======================
